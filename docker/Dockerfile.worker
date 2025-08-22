@@ -1,0 +1,42 @@
+FROM oven/bun:1.1.14
+
+WORKDIR /app
+
+# Install netcat (needed for wait-for-redis.sh)
+RUN apt-get update && apt-get install -y netcat && rm -rf /var/lib/apt/lists/*
+
+# Copy root monorepo files
+COPY package.json bun.lock* turbo.json ./
+
+# Copy Worker and dependencies
+COPY apps/worker/package.json ./apps/worker/package.json
+COPY packages/store/package.json ./packages/store/package.json
+COPY packages/redisstream/package.json ./packages/redisstream/package.json
+
+# Install dependencies
+RUN bun install
+
+# Copy source code
+COPY apps/worker ./apps/worker
+COPY packages/store ./packages/store
+COPY packages/redisstream ./packages/redisstream
+
+# Copy wait-for-redis script and make it executable
+COPY docker/wait-for-redis.sh /app/wait-for-redis.sh
+RUN chmod +x /app/wait-for-redis.sh
+
+# Copy worker start script and make it executable
+COPY docker/worker-start.sh /app/worker-start.sh
+RUN chmod +x /app/worker-start.sh
+
+# Generate Prisma client
+WORKDIR /app/packages/store
+RUN bun run generate
+
+# Worker runtime
+WORKDIR /app/apps/worker
+ENV DATABASE_URL="postgres://postgres:postgres@postgres:5432/mydb"
+ENV REDIS_URL="redis://redis:6379"
+
+#CMD ["bun", "run", "start"]
+CMD ["sh", "/app/worker-start.sh"]
