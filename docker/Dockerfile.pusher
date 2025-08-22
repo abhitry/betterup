@@ -1,59 +1,39 @@
-# -------------------------------
-# Stage 1: Base Bun image
-# -------------------------------
 FROM oven/bun:1.1.14
 
 WORKDIR /app
 
-# Install netcat (needed for wait-for-redis.sh)
-RUN apt-get update && apt-get install -y netcat && rm -rf /var/lib/apt/lists/*
+# Install netcat for health checks
+RUN apt-get update && apt-get install -y netcat-openbsd && rm -rf /var/lib/apt/lists/*
 
-
-# -------------------------------
-# Step 1: Copy root files for monorepo
-# -------------------------------
+# Copy package files
 COPY package.json bun.lock* turbo.json ./
-
-# -------------------------------
-# Step 2: Copy package.json of Pusher and dependencies
-# -------------------------------
 COPY apps/pusher/package.json ./apps/pusher/package.json
 COPY packages/store/package.json ./packages/store/package.json
 COPY packages/redisstream/package.json ./packages/redisstream/package.json
 
-# -------------------------------
-# Step 3: Install dependencies
-# -------------------------------
-RUN bun install
+# Install dependencies
+RUN bun install --frozen-lockfile
 
-# -------------------------------
-# Step 4: Copy source code
-# -------------------------------
+# Copy source code
 COPY apps/pusher ./apps/pusher
 COPY packages/store ./packages/store
 COPY packages/redisstream ./packages/redisstream
 
-# Copy wait-for-redis script and make it executable
-COPY docker/wait-for-redis.sh /app/wait-for-redis.sh
-RUN chmod +x /app/wait-for-redis.sh
-
-# Copy start script and make it executable
-COPY docker/pusher-start.sh /app/pusher-start.sh
-RUN chmod +x /app/pusher-start.sh
-# -------------------------------
-# Step 5: Generate Prisma client
-# -------------------------------
+# Generate Prisma client
 WORKDIR /app/packages/store
-RUN bun run generate 
+RUN bun run generate
 
-# -------------------------------
-# Step 6: Configure runtime
-# -------------------------------
+# Copy wait scripts
+COPY docker/wait-for-redis.sh /app/wait-for-redis.sh
+COPY docker/pusher-start.sh /app/pusher-start.sh
+RUN chmod +x /app/wait-for-redis.sh /app/pusher-start.sh
+
+# Set working directory to pusher
 WORKDIR /app/apps/pusher
+
+# Set environment variables
 ENV DATABASE_URL="postgres://postgres:postgres@postgres:5432/mydb"
 ENV REDIS_URL="redis://redis:6379"
 
-# -------------------------------
-# Step 7: Start Pusher
-# -------------------------------
-CMD ["sh", "/app/pusher-start.sh"]
+# Start pusher
+CMD ["/app/pusher-start.sh"]

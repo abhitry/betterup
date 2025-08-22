@@ -1,67 +1,42 @@
-# -------------------------------
-# Dockerfile.backend
-# -------------------------------
-
-# Use Bun base image
 FROM oven/bun:1.1.14
 
 WORKDIR /app
 
-# -------------------------------
-# Step 1: Copy package.json files (for caching)
-# -------------------------------
+# Install PostgreSQL client for health checks and migrations
+RUN apt-get update && apt-get install -y postgresql-client netcat-openbsd && rm -rf /var/lib/apt/lists/*
+
+# Copy package files for dependency installation
 COPY package.json bun.lock* turbo.json ./
 COPY apps/api/package.json ./apps/api/package.json
 COPY packages/store/package.json ./packages/store/package.json
 COPY packages/redisstream/package.json ./packages/redisstream/package.json
 
-# Copy tsconfig.json files only where they exist
+# Install dependencies
+RUN bun install --frozen-lockfile
 
-COPY packages/store/tsconfig.json ./packages/store/tsconfig.json
-COPY packages/redisstream/tsconfig.json ./packages/redisstream/tsconfig.json
-
-# -------------------------------
-# Step 2: Install dependencies (prod only)
-# -------------------------------
-RUN bun install 
-
-# -------------------------------
-# Step 3: Copy Prisma schema & generate client
-# -------------------------------
-############################COPY packages/store/prisma/schema.prisma ./packages/store/prisma/schema.prisma
-COPY packages/store ./packages/store
-WORKDIR /app/packages/store
-RUN bun run generate 
-
-# -------------------------------
-# Step 4: Copy full source code
-# -------------------------------
-WORKDIR /app
+# Copy source code
 COPY apps/api ./apps/api
-###########################COPY packages/store ./packages/store
+COPY packages/store ./packages/store
 COPY packages/redisstream ./packages/redisstream
 
-# This script will:
-# 1. Wait for Postgres to be ready
-# 2. Run Prisma migrations
-# 3. Seed the database
-# 4. Start the API
+# Generate Prisma client
+WORKDIR /app/packages/store
+RUN bun run generate
+
+# Copy and make entrypoint script executable
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# -------------------------------
-# Step 5: Configure runtime
-# -------------------------------
+# Set working directory back to API
 WORKDIR /app/apps/api
 
-ENV DATABASE_URL="postgres://postgres:postgres@postgres:5432/mydb" \
-    REDIS_URL="redis://redis:6379" \
-    JWT_SECRET="secret" \
-    PORT=3001
+# Set environment variables
+ENV DATABASE_URL="postgres://postgres:postgres@postgres:5432/mydb"
+ENV REDIS_URL="redis://redis:6379"
+ENV JWT_SECRET="secret"
+ENV PORT=3001
 
 EXPOSE 3001
 
-# -------------------------------
-# Step 6: Start the API server
-# -------------------------------
+# Use entrypoint script
 ENTRYPOINT ["/app/entrypoint.sh"]

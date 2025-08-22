@@ -1,62 +1,90 @@
 import { createClient } from "redis";
-const STREAM_NAME="betteruptime:website";
 
-const client = await createClient()
-  .on("error", (err) => console.log("Redis Client Error", err))
-  .connect();
+const STREAM_NAME = "betteruptime:website";
+const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
-type WebsiteEvent = {url: string, id: string}
-type MessageType={
-    id:string,
-    message:{
-      url:string,
-      id:string
-    }
+let client: any = null;
+
+async function getClient() {
+  if (!client) {
+    client = createClient({ url: REDIS_URL });
+    client.on("error", (err: any) => console.log("Redis Client Error", err));
+    await client.connect();
   }
+  return client;
+}
 
-async function xAdd({url, id}: WebsiteEvent) {
-  await client.xAdd(
-    STREAM_NAME, '*', {
-        url,
-        id
-    }
-  );
+type WebsiteEvent = { url: string; id: string };
+type MessageType = {
+  id: string;
+  message: {
+    url: string;
+    id: string;
+  };
+};
+
+async function xAdd({ url, id }: WebsiteEvent) {
+  const redisClient = await getClient();
+  await redisClient.xAdd(STREAM_NAME, "*", {
+    url,
+    id,
+  });
 }
 
 export async function xAddBulk(websites: WebsiteEvent[]) {
+  if (websites.length === 0) return;
+  
   for (let i = 0; i < websites.length; i++) {
     await xAdd({
       url: websites[i].url,
-      id: websites[i].id
-    })
+      id: websites[i].id,
+    });
   }
 }
 
-export async function xReadGroup(consumerGroup: string,workerId:string): Promise<MessageType[] | undefined> {
-   const res = await client.xReadGroup(
-    consumerGroup, // group name
-    workerId,      // consumer name
-    [
+export async function xReadGroup(
+  consumerGroup: string,
+  workerId: string
+): Promise<MessageType[] | undefined> {
+  const redisClient = await getClient();
+  
+  try {
+    const res = await redisClient.xReadGroup(
+      consumerGroup,
+      workerId,
+      [
+        {
+          key: STREAM_NAME,
+          id: ">",
+        },
+      ],
       {
-        key: STREAM_NAME,
-        id: ">", // read new messages
-      },
-    ],
-    {
-      COUNT: 500,
-      BLOCK: 5000, // optional: wait for messages up to 5s
+        COUNT: 10,
+        BLOCK: 5000,
+      }
+    );
+
+    if (!res || res.length === 0) {
+      return undefined;
     }
-  );
-  //@ts-ignore
-  let messages:MessageType[]|undefined=res?.[0]?.messages;
 
-  return messages;
+    const messages: MessageType[] = res[0]?.messages || [];
+    return messages;
+  } catch (error) {
+    console.error("Error reading from Redis stream:", error);
+    return undefined;
+  }
 }
 
-async function xAck(consumerGroup: string,eventId:string) {
-    const res22=await client.xAck(STREAM_NAME,consumerGroup,eventId)
+async function xAck(consumerGroup: string, eventId: string) {
+  const redisClient = await getClient();
+  await redisClient.xAck(STREAM_NAME, consumerGroup, eventId);
 }
 
-export async function xAckBulk(consumerGroup: string,eventId:string[]) {
-  eventId.map(eventId=>xAck(consumerGroup,eventId));
+export async function xAckBulk(consumerGroup: string, eventIds: string[]) {
+  if (eventIds.length === 0) return;
+  
+  for (const eventId of eventIds) {
+    await xAck(consumerGroup, eventId);
+  }
 }

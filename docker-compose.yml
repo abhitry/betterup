@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   postgres:
-    image: postgres:latest
+    image: postgres:15
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -11,60 +11,58 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-
-    # Add: Healthcheck for Postgres to ensure services wait until DB is ready
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 2s
-      timeout: 2s
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mydb"]
+      interval: 5s
+      timeout: 5s
       retries: 10
 
   redis:
-    image: redis:8
+    image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data        # persists Redis data
+      - redis_data:/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 2s
-      timeout: 2s
-      retries: 15              # increase retries to ensure readiness
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   api:
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
     environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/mydb
       REDIS_URL: redis://redis:6379
       JWT_SECRET: secret
+      PORT: 3001
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     ports:
       - "3001:3001"
-
-    # Add: Depends on healthy Redis and fully ready Postgres to avoid connection issues
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-
+    restart: unless-stopped
 
   frontend:
     build:
       context: .
       dockerfile: docker/Dockerfile.frontend
     environment:
-      NEXT_PUBLIC_BACKEND_URL: http://api:3001
+      NEXT_PUBLIC_BACKEND_URL: http://localhost:3001
       PORT: 3000
     ports:
       - "3000:3000"
     depends_on:
       - api
+    restart: unless-stopped
 
   pusher:
     build:
@@ -76,23 +74,19 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-
-    # Add: Depends on healthy Redis and fully ready Postgres to avoid connection errors
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
-
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
 
   worker:
     build:
       context: .
-      dockerfile: docker/Dockerfile.worker 
+      dockerfile: docker/Dockerfile.worker
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/mydb
       REDIS_URL: redis://redis:6379
@@ -101,18 +95,14 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-
-    # Add: Depends on healthy Redis and fully ready Postgres to avoid connection errors
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
-
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
 
 volumes:
   postgres_data:
